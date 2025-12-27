@@ -5,12 +5,11 @@ from plotly.subplots import make_subplots
 
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(
-    page_title="QualSteam Analytics | Zydus",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    page_title="QualSteam | Pressure Control Forensics",
+    layout="wide"
 )
 
-# ---------------- CONFIG ----------------
+# ---------------- FILES ----------------
 DATA_FILES = {
     "Scenario 1": "data/df_1_cleaned.csv",
     "Scenario 2": "data/df_2_cleaned.csv",
@@ -18,116 +17,98 @@ DATA_FILES = {
     "Scenario 4": "data/df_4_cleaned.csv"
 }
 
+# ---------------- COLUMNS ----------------
 COLS = {
     "ts": "Timestamp",
-    "temp_pv": "Process Temp",
-    "temp_sp": "Process Temp SP",
-    "flow": "Steam Flow Rate",
-    "totalizer": "Steam Totalizer",
-    "valve": "QualSteam Valve Opening",
-    "p1": "Inlet Steam Pressure",
     "p2": "Outlet Steam Pressure",
     "p2_sp": "Pressure SP"
 }
 
-# ---------------- DATA LOADER ----------------
+# ---------------- PHASE WINDOWS ----------------
+PHASES = {
+    "Scenario 1": {
+        "Ramp Up": ("00:18", "00:21"),
+        "Stable": ("00:26", "01:03")
+    },
+    "Scenario 2": {
+        "Ramp Up": ("06:50", "06:54"),
+        "Stable": ("06:59", "07:44")
+    },
+    "Scenario 3": {
+        "Ramp Up": ("05:13", "05:17"),
+        "Stable": ("05:20", "06:08")
+    },
+    "Scenario 4": {
+        "Ramp Up": ("11:31", "11:35"),
+        "Stable": ("11:39", "12:25")
+    }
+}
+
+# ---------------- LOAD DATA ----------------
 @st.cache_data
 def load_data(path):
     df = pd.read_csv(path)
     df[COLS["ts"]] = pd.to_datetime(df[COLS["ts"]])
-    df = df.sort_values(COLS["ts"])
-    return df
+    return df.sort_values(COLS["ts"])
 
-# ---------------- STEAM CONSUMPTION ----------------
-def calculate_steam_consumed(df):
-    if COLS["totalizer"] in df.columns:
-        return df[COLS["totalizer"]].iloc[-1] - df[COLS["totalizer"]].iloc[0]
-    else:
-        df["dt_hr"] = df[COLS["ts"]].diff().dt.total_seconds() / 3600
-        df["steam_kg"] = df[COLS["flow"]] * df["dt_hr"]
-        return df["steam_kg"].sum()
+# ---------------- FILTER PHASE ----------------
+def filter_phase(df, start_time, end_time):
+    date = df[COLS["ts"]].dt.date.iloc[0]
+    start = pd.to_datetime(f"{date} {start_time}")
+    end = pd.to_datetime(f"{date} {end_time}")
+    return df[(df[COLS["ts"]] >= start) & (df[COLS["ts"]] <= end)]
 
 # ---------------- PLOT ----------------
-def plot_dashboard(df, title):
-
-    steam_consumed = calculate_steam_consumed(df)
+def plot_pressure(df_ramp, df_stable, scenario):
 
     fig = make_subplots(
-        rows=4, cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.12,
+        rows=2, cols=1,
+        shared_xaxes=False,
+        vertical_spacing=0.18,
         subplot_titles=[
-            "Temperature Control",
-            "Pressure Dynamics",
-            "Steam Flow Rate",
-            "Control Valve Output"
+            "Ramp-Up Phase: Pressure SP vs Outlet P2",
+            "Stable Phase: Pressure SP vs Outlet P2"
         ]
     )
 
-    # ---- TEMP ----
+    # ---- RAMP UP ----
     fig.add_trace(go.Scatter(
-        x=df[COLS["ts"]],
-        y=df[COLS["temp_sp"]],
-        name="Temp SP",
-        line=dict(color="black", dash="dot")
+        x=df_ramp[COLS["ts"]],
+        y=df_ramp[COLS["p2_sp"]],
+        name="Pressure SP",
+        line=dict(color="black", dash="dot", width=2)
     ), row=1, col=1)
 
     fig.add_trace(go.Scatter(
-        x=df[COLS["ts"]],
-        y=df[COLS["temp_pv"]],
-        name="Temp PV",
-        line=dict(color="#D32F2F")
-    ), row=1, col=1)
-
-    # ---- PRESSURE ----
-    fig.add_trace(go.Scatter(
-        x=df[COLS["ts"]],
-        y=df[COLS["p2"]],
+        x=df_ramp[COLS["ts"]],
+        y=df_ramp[COLS["p2"]],
         name="Outlet P2",
-        fill="tozeroy",
-        line=dict(color="#1A237E")
+        line=dict(color="#1A237E", width=2)
+    ), row=1, col=1)
+
+    # ---- STABLE ----
+    fig.add_trace(go.Scatter(
+        x=df_stable[COLS["ts"]],
+        y=df_stable[COLS["p2_sp"]],
+        showlegend=False,
+        line=dict(color="black", dash="dot", width=2)
     ), row=2, col=1)
 
-    if COLS["p2_sp"] in df.columns:
-        fig.add_trace(go.Scatter(
-            x=df[COLS["ts"]],
-            y=df[COLS["p2_sp"]],
-            name="Pressure SP",
-            line=dict(color="black", dash="dot")
-        ), row=2, col=1)
-
-    # ---- STEAM FLOW ----
     fig.add_trace(go.Scatter(
-        x=df[COLS["ts"]],
-        y=df[COLS["flow"]],
-        name=f"Steam Flow (Consumed: {steam_consumed:.1f} kg)",
-        fill="tozeroy",
-        line=dict(color="#7B1FA2")
-    ), row=3, col=1)
+        x=df_stable[COLS["ts"]],
+        y=df_stable[COLS["p2"]],
+        showlegend=False,
+        line=dict(color="#1A237E", width=2)
+    ), row=2, col=1)
 
-    # ---- VALVE ----
-    fig.add_trace(go.Scatter(
-        x=df[COLS["ts"]],
-        y=df[COLS["valve"]],
-        name="Valve %",
-        fill="tozeroy",
-        line=dict(color="#B8860B")
-    ), row=4, col=1)
-
-    # ---- LAYOUT FIXES ----
     fig.update_layout(
-        height=1300,
-        title=dict(text=title, font=dict(size=22, color="black")),
+        height=850,
+        title=f"Pressure Control Performance — {scenario}",
         paper_bgcolor="white",
         plot_bgcolor="white",
         hovermode="x unified",
-        margin=dict(t=100, b=60),
-        legend=dict(
-            orientation="h",
-            y=1.05,
-            font=dict(color="black")
-        ),
-        font=dict(color="black")
+        font=dict(color="black"),
+        margin=dict(t=100)
     )
 
     fig.update_xaxes(
@@ -138,27 +119,30 @@ def plot_dashboard(df, title):
     )
 
     fig.update_yaxes(
+        title_text="Pressure (bar)",
         showgrid=True,
         gridcolor="#E0E0E0",
         tickfont=dict(color="black"),
         title_font=dict(color="black")
     )
 
-    fig.update_yaxes(title_text="Temp (°C)", row=1, col=1)
-    fig.update_yaxes(title_text="Pressure (bar)", row=2, col=1)
-    fig.update_yaxes(title_text="Steam Flow (kg/hr)", row=3, col=1)
-    fig.update_yaxes(title_text="Valve (%)", row=4, col=1, range=[0, 105])
-
-    return fig, steam_consumed
+    return fig
 
 # ---------------- APP ----------------
-st.sidebar.title("QualSteam Analytics")
+st.sidebar.title("QualSteam – Sales View")
 scenario = st.sidebar.radio("Select Scenario", list(DATA_FILES.keys()))
 
 df = load_data(DATA_FILES[scenario])
-fig, steam_kg = plot_dashboard(df, f"Forensic Analysis – {scenario}")
 
-st.title("QualSteam Forensic Dashboard")
-st.metric("Total Steam Consumed", f"{steam_kg:.1f} kg")
+ramp_start, ramp_end = PHASES[scenario]["Ramp Up"]
+stable_start, stable_end = PHASES[scenario]["Stable"]
+
+df_ramp = filter_phase(df, ramp_start, ramp_end)
+df_stable = filter_phase(df, stable_start, stable_end)
+
+st.title("Pressure Control Forensic Summary")
+st.caption("Ramp-Up and Stable Phase Comparison (Pressure SP vs Outlet P2)")
+
+fig = plot_pressure(df_ramp, df_stable, scenario)
 st.plotly_chart(fig, use_container_width=True)
 
